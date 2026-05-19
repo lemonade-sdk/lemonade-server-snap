@@ -40,25 +40,39 @@ platforms:
   amd64:
 
 layout:
+  /usr/include:
+    bind: $SNAP/usr/include
   /usr/share/lemonade-server:
     symlink: $SNAP/usr/share/lemonade-server
   # Node.js externalizes some builtins to /usr/share/nodejs at a hardcoded path.
   # Bind the snap's copy so node can find them at runtime.
   /usr/share/nodejs:
     bind: $SNAP/usr/share/nodejs
-  # Add layout entries so XRT's hardcoded absolute paths resolve to the snap's copies
+  # crt startup/termination objects needed by Triton JIT (ROCm clang passes
+  # them as absolute paths to ld.lld, so they must exist at the system path).
+  /usr/lib/x86_64-linux-gnu/crti.o:
+    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/crti.o
+  /usr/lib/x86_64-linux-gnu/crtn.o:
+    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/crtn.o
+  # libc.so is a linker script that references libc_nonshared.a by absolute path.
+  /usr/lib/x86_64-linux-gnu/libc_nonshared.a:
+    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/libc_nonshared.a
+  # XRT soname files — flm dlopen()s these by absolute path.
+  # Sources are hard links (not symlinks) because bind-file requires regular files.
   /usr/lib/x86_64-linux-gnu/libxrt_core.so.2:
-    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/libxrt_core.so.2.21.0
+    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/libxrt_core.so.2
   /usr/lib/x86_64-linux-gnu/libxrt_coreutil.so.2:
-    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/libxrt_coreutil.so.2.21.0
+    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/libxrt_coreutil.so.2
   /usr/lib/x86_64-linux-gnu/libxrt_driver_xdna.so.2:
-    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/libxrt_driver_xdna.so.2.21.0
-      
+    bind-file: $SNAP/usr/lib/x86_64-linux-gnu/libxrt_driver_xdna.so.2
 plugs:
   gpu-2404:
     interface: content
     target: $SNAP/gpu-2404
     default-provider: mesa-2404
+  shared-memory:
+    interface: shared-memory
+    private: true
 slots:
   # Adds a pseudo content interface to allow clients to express their
   # runtime dependency on lemonade-server
@@ -82,8 +96,10 @@ apps:
       - gpu-2404
       - hardware-observe
       - system-observe
+      - shared-memory
     environment:
       LD_LIBRARY_PATH: "$SNAP/usr/share/lemonade-server:$SNAP/usr/lib/flm:$SNAP_COMMON/cache/lemonade/bin/llamacpp/vulkan:$SNAP_COMMON/cache/lemonade/bin/whispercpp/vulkan:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      LIBRARY_PATH: "$SNAP/usr/lib/x86_64-linux-gnu"
       PATH: "$SNAP/usr/bin:$SNAP_USER_COMMON/tools/bin:$PATH"
       HOME: "$SNAP_COMMON"
       LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
@@ -108,8 +124,10 @@ apps:
       - process-control
       - hardware-observe
       - system-observe
+      - shared-memory
     environment:
       LD_LIBRARY_PATH: "$SNAP/usr/share/lemonade-server:$SNAP/usr/lib/flm:$SNAP_COMMON/cache/lemonade/bin/llamacpp/vulkan:$SNAP_COMMON/cache/lemonade/bin/whispercpp/vulkan:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      LIBRARY_PATH: "$SNAP/usr/lib/x86_64-linux-gnu"
       PATH: "$SNAP/usr/bin:$PATH"
       HOME: "$SNAP_COMMON"
       LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
@@ -159,6 +177,14 @@ parts:
       - libdrm-amdgpu1 # SD backends need this at runtime
       - libnuma1 # SD backends need this at runtime
       - libnode109
+      - libc6-dev # C headers (stdlib.h etc.) needed by ROCm bundled clang for Triton JIT
+      - linux-libc-dev # Linux kernel headers needed by HIP runtime
+      - binutils # Provides ld linker for Triton JIT compilation
+      - lld # Provides ld.lld for ROCm bundled clang to use as linker
+      - libgcc-s1 # Provides libgcc_s.so.1; we create the unversioned linker stub below
+    override-prime: |
+      craftctl default
+      ln -sf libgcc_s.so.1 $CRAFT_PRIME/usr/lib/x86_64-linux-gnu/libgcc_s.so
     override-build: |
       set +u # For unbound variables
       # workaround for build.snapcraft.io builds
@@ -246,6 +272,12 @@ parts:
       - libsystemd-dev
       - ocl-icd-dev
       - systemtap-sdt-dev
+    override-prime: |
+      craftctl default
+      cd $CRAFT_PRIME/usr/lib/x86_64-linux-gnu
+      for lib in libxrt_core libxrt_coreutil; do
+        ln -f ${lib}.so.2.21.0 ${lib}.so.2
+      done
     prime:
       - usr/lib/x86_64-linux-gnu/libxrt*.so*
 
@@ -287,6 +319,10 @@ parts:
         -DSKIP_KMOD=1
       cmake --build . -- -j$(nproc)
       DESTDIR="$CRAFT_PART_INSTALL" cmake --install .
+    override-prime: |
+      craftctl default
+      cd $CRAFT_PRIME/usr/lib/x86_64-linux-gnu
+      ln -f libxrt_driver_xdna.so.2.21.0 libxrt_driver_xdna.so.2
     stage:
       - usr/lib/x86_64-linux-gnu/libxrt_driver_xdna*
     prime:
