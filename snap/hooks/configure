@@ -33,11 +33,13 @@ lemonade_keys=$("$SNAP/usr/bin/lemonade" config 2>/dev/null \
     | awk '$0 ~ /^[[:space:]]/ && NF >= 2 && $1 ~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/ { print $1 }')
 
 for key in $lemonade_keys; do
-    val=$(snapctl get "$key" 2>/dev/null || true)
-    [ -z "$val" ] && continue
-    "$SNAP/usr/bin/lemonade" config set "$key=$val"
-    new_val=$(get_lemonade_value "$key" || true)
-    [ -n "$new_val" ] && [ "$new_val" != "$val" ] && snapctl set "$key=$new_val"
+    if val=$(snapctl get "$key" 2>/dev/null); then
+        "$SNAP/usr/bin/lemonade" config set "$key=$val"
+        new_val=$(get_lemonade_value "$key" || true)
+        [ -n "$new_val" ] && [ "$new_val" != "$val" ] && snapctl set "$key=$new_val"
+    else
+        "$SNAP/usr/bin/lemonade" config set "$key="
+    fi
 done
 
 # Restart the daemon so it picks up the new config. No-op on initial install
