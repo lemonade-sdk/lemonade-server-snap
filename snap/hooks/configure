@@ -32,16 +32,29 @@ get_lemonade_value() {
 lemonade_keys=$("$SNAP/usr/bin/lemonade" config 2>/dev/null \
     | awk '$0 ~ /^[[:space:]]/ && NF >= 2 && $1 ~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/ { print $1 }')
 
+changed=0
+
 for key in $lemonade_keys; do
+    old_val=$(get_lemonade_value "$key" || true)
+
     if val=$(snapctl get "$key" 2>/dev/null); then
-        "$SNAP/usr/bin/lemonade" config set "$key=$val"
+        if [ "$old_val" != "$val" ]; then
+            "$SNAP/usr/bin/lemonade" config set "$key=$val"
+            changed=1
+        fi
         new_val=$(get_lemonade_value "$key" || true)
-        [ -n "$new_val" ] && [ "$new_val" != "$val" ] && snapctl set "$key=$new_val"
+        if [ -n "$new_val" ] && [ "$new_val" != "$val" ]; then
+            snapctl set "$key=$new_val"
+            changed=1
+        fi
     else
-        "$SNAP/usr/bin/lemonade" config set "$key="
+        if [ -n "$old_val" ]; then
+            "$SNAP/usr/bin/lemonade" config set "$key="
+            changed=1
+        fi
     fi
 done
 
 # Restart the daemon so it picks up the new config. No-op on initial install
 # (daemon hasn't started yet) and harmless when invoked from later `snap set`.
-snapctl restart "$SNAP_NAME.daemon" 2>/dev/null || true
+[ "$changed" -eq 0 ] || snapctl restart "$SNAP_NAME.daemon" 2>/dev/null || true
