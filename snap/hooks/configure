@@ -30,7 +30,7 @@ get_lemonade_value() {
 # `snap set` and forward it to `lemonade config set`. Then mirror back what
 # lemonade stored so `snap get` reflects post-normalization state.
 lemonade_keys=$("$SNAP/usr/bin/lemonade" config 2>/dev/null \
-    | awk '$0 ~ /^[[:space:]]/ && NF >= 2 && $1 ~ /^[a-zA-Z_][a-zA-Z0-9_]*$/ { print $1 }')
+    | awk '$0 ~ /^[[:space:]]/ && NF >= 2 && $1 ~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/ { print $1 }')
 
 for key in $lemonade_keys; do
     val=$(snapctl get "$key" 2>/dev/null || true)
