@@ -82,11 +82,6 @@ slots:
     read:
       - $SNAP/meta/snap.yaml
 
-hooks:
-  configure:
-    plugs:
-      - network
-
 apps:
   lemonade-server:
     command: usr/bin/lemonade
