@@ -1,6 +1,5 @@
-#!/bin/sh
-set -eu
-
+#!/bin/bash
+set -euo pipefail
 # Replicate the lemonade-server app environment so the bare lemonade binary
 # starts up correctly from inside the hook
 export LD_LIBRARY_PATH="$SNAP/usr/share/lemonade-server:$SNAP_COMMON/cache/lemonade/bin/llamacpp/vulkan:$SNAP_COMMON/cache/lemonade/bin/whispercpp/vulkan:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
