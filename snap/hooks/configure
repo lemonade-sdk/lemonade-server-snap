@@ -41,8 +41,7 @@ for key in $lemonade_keys; do
         if [ "$old_val" != "$val" ]; then
             "$SNAP/usr/bin/lemonade" config set "$key=$val"
             changed=1
-            lemonade_config=$("$SNAP/usr/bin/lemonade" config 2>/dev/null)
-        fi
+            lemonade_config=$("$SNAP/usr/bin/lemonade" config)
         new_val=$(get_lemonade_value "$key" || true)
         if [ -n "$new_val" ] && [ "$new_val" != "$val" ]; then
             snapctl set "$key=$new_val"
