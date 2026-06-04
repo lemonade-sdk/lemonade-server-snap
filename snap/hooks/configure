@@ -1,0 +1,55 @@
+#!/bin/bash
+set -euo pipefail
+# Replicate the lemonade-server app environment so the bare lemonade binary
+# starts up correctly from inside the hook
+export LD_LIBRARY_PATH="$SNAP/usr/share/lemonade-server:$SNAP_COMMON/cache/lemonade/bin/llamacpp/vulkan:$SNAP_COMMON/cache/lemonade/bin/whispercpp/vulkan:$SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$SNAP/usr/bin:$PATH"
+export HOME="$SNAP_COMMON"
+export LEMONADE_CACHE_DIR="$SNAP_COMMON/cache/lemonade"
+export FLM_MODEL_PATH="$SNAP_COMMON/flm/models"
+export FLM_CONFIG_PATH="$SNAP/usr/share/flm/model_list.json"
+export FLM_XCLBIN_PATH="$SNAP/usr/share/flm/xclbins"
+
+# Cache `lemonade config` output and parse values from it.
+lemonade_config=$("$SNAP/usr/bin/lemonade" config 2>/dev/null)
+
+# Pluck a single value out of `lemonade config`'s fixed-width text table.
+get_lemonade_value() {
+    awk -v k="$1" '
+            $1 == k {
+                val = $2
+                for (i = 3; i <= NF; i++) val = val " " $i
+                print val
+                exit
+            }
+        ' <<<"$lemonade_config"
+}
+
+# Discover config keys by parsing `lemonade config` (snapctl has no "list all
+# keys" command, and `snapctl get -d` without a key argument is an error on
+# this snapd). For each known key, ask snapd whether a value was set via
+# `snap set` and forward it to `lemonade config set`. Then mirror back what
+# lemonade stored so `snap get` reflects post-normalization state.
+lemonade_keys=$(awk '$0 ~ /^[[:space:]]/ && NF >= 2 && $1 ~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/ { print $1 }' <<<"$lemonade_config")
+
+changed=0
+
+for key in $lemonade_keys; do
+    old_val=$(get_lemonade_value "$key" || true)
+
+    if val=$(snapctl get "$key" 2>/dev/null); then
+        if [ "$old_val" != "$val" ]; then
+            "$SNAP/usr/bin/lemonade" config set "$key=$val"
+            changed=1
+            lemonade_config=$("$SNAP/usr/bin/lemonade" config)
+        new_val=$(get_lemonade_value "$key" || true)
+        if [ -n "$new_val" ] && [ "$new_val" != "$val" ]; then
+            snapctl set "$key=$new_val"
+            changed=1
+        fi
+    fi
+done
+
+# Restart the daemon so it picks up the new config. No-op on initial install
+# (daemon hasn't started yet) and harmless when invoked from later `snap set`.
+[ "$changed" -eq 0 ] || snapctl restart "$SNAP_NAME.daemon" 2>/dev/null || true
