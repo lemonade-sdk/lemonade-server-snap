@@ -10,17 +10,19 @@ export FLM_MODEL_PATH="$SNAP_COMMON/flm/models"
 export FLM_CONFIG_PATH="$SNAP/usr/share/flm/model_list.json"
 export FLM_XCLBIN_PATH="$SNAP/usr/share/flm/xclbins"
 
+# Cache `lemonade config` output and parse values from it.
+lemonade_config=$("$SNAP/usr/bin/lemonade" config 2>/dev/null)
+
 # Pluck a single value out of `lemonade config`'s fixed-width text table.
 get_lemonade_value() {
-    "$SNAP/usr/bin/lemonade" config 2>/dev/null \
-        | awk -v k="$1" '
+    awk -v k="$1" '
             $1 == k {
                 val = $2
                 for (i = 3; i <= NF; i++) val = val " " $i
                 print val
                 exit
             }
-        '
+        ' <<<"$lemonade_config"
 }
 
 # Discover config keys by parsing `lemonade config` (snapctl has no "list all
@@ -28,8 +30,7 @@ get_lemonade_value() {
 # this snapd). For each known key, ask snapd whether a value was set via
 # `snap set` and forward it to `lemonade config set`. Then mirror back what
 # lemonade stored so `snap get` reflects post-normalization state.
-lemonade_keys=$("$SNAP/usr/bin/lemonade" config 2>/dev/null \
-    | awk '$0 ~ /^[[:space:]]/ && NF >= 2 && $1 ~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/ { print $1 }')
+lemonade_keys=$(awk '$0 ~ /^[[:space:]]/ && NF >= 2 && $1 ~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/ { print $1 }' <<<"$lemonade_config")
 
 changed=0
 
@@ -40,6 +41,7 @@ for key in $lemonade_keys; do
         if [ "$old_val" != "$val" ]; then
             "$SNAP/usr/bin/lemonade" config set "$key=$val"
             changed=1
+            lemonade_config=$("$SNAP/usr/bin/lemonade" config 2>/dev/null)
         fi
         new_val=$(get_lemonade_value "$key" || true)
         if [ -n "$new_val" ] && [ "$new_val" != "$val" ]; then
