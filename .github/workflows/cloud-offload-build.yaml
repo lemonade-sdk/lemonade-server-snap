@@ -1,0 +1,120 @@
+name: Cloud Offload Build
+
+# Builds the snap from the `main-cloud-offload` branch (whose snapcraft.yaml
+# pins the lemonade-server part to the upstream
+# `claude/cloud-offload-routing-lseo8` branch) and publishes it to
+# latest/edge/cloud-offload whenever that upstream branch gets a new commit.
+#
+# GitHub cannot trigger directly on commits in another repository, so this
+# polls the upstream branch on a schedule. It also accepts a repository_dispatch
+# event (type: cloud-offload-commit) for instant triggering if you wire a sender
+# into the lemonade repo, and a manual workflow_dispatch with a force option.
+#
+# NOTE: schedule and repository_dispatch only fire when this file lives on the
+# repository's DEFAULT branch. Merge this workflow to the default branch; it
+# checks out SNAP_BRANCH below to do the actual build.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # poll the upstream branch every 30 minutes
+  repository_dispatch:
+    types: [cloud-offload-commit]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build even if the upstream SHA is unchanged'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-offload-build
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/lemonade-sdk/lemonade.git
+  UPSTREAM_BRANCH: claude/cloud-offload-routing-lseo8
+  # Branch in THIS repo holding the cloud-offload snapcraft.yaml to build.
+  SNAP_BRANCH: main-cloud-offload
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.ls.outputs.sha }}
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - name: Resolve upstream branch HEAD
+        id: ls
+        run: |
+          sha=$(git ls-remote "$UPSTREAM_REPO" "refs/heads/$UPSTREAM_BRANCH" | awk '{print $1}')
+          if [ -z "$sha" ]; then
+            echo "::error::Branch $UPSTREAM_BRANCH not found in $UPSTREAM_REPO"
+            exit 1
+          fi
+          echo "Upstream $UPSTREAM_BRANCH is at $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Look for a build marker for this SHA
+        id: marker
+        uses: actions/cache/restore@v4
+        with:
+          path: .built-sha
+          key: cloud-offload-built-${{ steps.ls.outputs.sha }}
+          lookup-only: true
+
+      - name: Decide whether to build
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
+            echo "Forced build requested"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.marker.outputs.cache-hit }}" = "true" ]; then
+            echo "SHA ${{ steps.ls.outputs.sha }} already built; nothing to do"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New upstream commit ${{ steps.ls.outputs.sha }}; building"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout snap branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SNAP_BRANCH }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Build snap
+        id: build
+        uses: canonical/action-build@v1.3.0
+
+      - name: Publish to latest/edge/cloud-offload
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.STORE_LOGIN }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: latest/edge/cloud-offload
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap-amd64-cloud-offload
+          path: ${{ steps.build.outputs.snap }}
+          retention-days: 5
+
+      - name: Record build marker
+        run: echo "${{ needs.check.outputs.sha }}" > .built-sha
+
+      - name: Save build marker
+        uses: actions/cache/save@v4
+        with:
+          path: .built-sha
+          key: cloud-offload-built-${{ needs.check.outputs.sha }}
