@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS FILE BELONGS IN THE UPSTREAM lemonade-sdk/lemonade REPOSITORY, NOT HERE.
+#
+# Copy it to that repo as:
+#   .github/workflows/dispatch-cloud-offload.yaml
+#
+# It fires a repository_dispatch (type: cloud-offload-commit) at
+# lemonade-sdk/lemonade-server-snap on every push to the
+# claude/cloud-offload-routing-lseo8 branch, which instantly triggers the
+# Cloud Offload Build workflow there (no waiting for the 30-min poll).
+#
+# Setup (in the lemonade repo settings):
+#   Add a secret named SNAP_DISPATCH_TOKEN containing a Personal Access Token
+#   with permission to dispatch to lemonade-sdk/lemonade-server-snap:
+#     - Fine-grained PAT: repository access = lemonade-sdk/lemonade-server-snap,
+#       permission "Contents: Read and write".
+#     - or Classic PAT with the `repo` scope.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Dispatch Cloud Offload Snap Build
+
+on:
+  push:
+    branches:
+      - claude/cloud-offload-routing-lseo8
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger snap build
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SNAP_DISPATCH_TOKEN }}
+          repository: lemonade-sdk/lemonade-server-snap
+          event-type: cloud-offload-commit
+          client-payload: |
+            {
+              "sha": "${{ github.sha }}",
+              "ref": "${{ github.ref }}",
+              "repository": "${{ github.repository }}"
+            }
