@@ -130,6 +130,11 @@ apps:
       LIBRARY_PATH: "$SNAP/usr/lib/x86_64-linux-gnu"
       PATH: "$SNAP/usr/bin:$PATH"
       HOME: "$SNAP_COMMON"
+      # System daemons run via systemd with no user session, so snapd does not
+      # set XDG_RUNTIME_DIR. lemond's get_runtime_dir() requires it to point at
+      # an existing, writable directory (it only creates a "lemonade" subdir
+      # inside it), so point it at the snap's always-present writable common dir.
+      XDG_RUNTIME_DIR: "$SNAP_COMMON"
       LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
       LEMONADE_DISABLE_SYSTEMD_JOURNAL: 1
       FLM_MODEL_PATH: $SNAP_COMMON/flm/models
