@@ -187,6 +187,7 @@ parts:
       - binutils # Provides ld linker for Triton JIT compilation
       - lld # Provides ld.lld for ROCm bundled clang to use as linker
       - libgcc-s1 # Provides libgcc_s.so.1; we create the unversioned linker stub below
+      - xz-utils
     override-prime: |
       craftctl default
       ln -sf libgcc_s.so.1 $CRAFT_PRIME/usr/lib/x86_64-linux-gnu/libgcc_s.so
