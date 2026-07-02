@@ -235,6 +235,7 @@ parts:
         craftctl set version=$VERSION
       fi
     override-build: |
+      export PATH="/snap/node/current/bin:$PATH"
       craftctl default
 
   gpu-snap:
