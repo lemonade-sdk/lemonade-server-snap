@@ -127,7 +127,6 @@ apps:
       XDG_RUNTIME_DIR: "$SNAP_COMMON"
       LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
       LEMONADE_DISABLE_SYSTEMD_JOURNAL: 1
-      #FLM_CONFIG_PATH: "$SNAP_COMMON/cache/lemonade/bin/flm/npu/model_list.json"
 
 parts:
   deps:
