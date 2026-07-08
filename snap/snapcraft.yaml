@@ -58,14 +58,6 @@ layout:
   # libc.so is a linker script that references libc_nonshared.a by absolute path.
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libc_nonshared.a:
     bind-file: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libc_nonshared.a
-  # XRT soname files — flm dlopen()s these by absolute path.
-  # Sources are hard links (not symlinks) because bind-file requires regular files.
-  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_core.so.2:
-    bind-file: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_core.so.2
-  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_coreutil.so.2:
-    bind-file: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_coreutil.so.2
-  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_driver_xdna.so.2:
-    bind-file: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_driver_xdna.so.2
 plugs:
   gpu-2404:
     interface: content
@@ -99,14 +91,11 @@ apps:
       - system-observe
       - shared-memory
     environment:
-      LD_LIBRARY_PATH: "$SNAP/usr/share/lemonade-server:$SNAP/usr/lib/flm:$SNAP_COMMON/cache/lemonade/bin/llamacpp/vulkan:$SNAP_COMMON/cache/lemonade/bin/whispercpp/vulkan:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      LD_LIBRARY_PATH: "$SNAP/usr/share/lemonade-server:$SNAP_COMMON/cache/lemonade/bin/llamacpp/vulkan:$SNAP_COMMON/cache/lemonade/bin/whispercpp/vulkan:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
       LIBRARY_PATH: "$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR"
       PATH: "$SNAP/usr/bin:$SNAP_USER_COMMON/tools/bin:$PATH"
       HOME: "$SNAP_COMMON"
       LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
-      FLM_MODEL_PATH: $SNAP_COMMON/flm/models
-      FLM_CONFIG_PATH: $SNAP/usr/share/flm/model_list.json
-      FLM_XCLBIN_PATH: $SNAP/usr/share/flm/xclbins
   daemon:
     command: usr/bin/lemond
     command-chain: [bin/gpu-2404-wrapper]
@@ -127,7 +116,7 @@ apps:
       - system-observe
       - shared-memory
     environment:
-      LD_LIBRARY_PATH: "$SNAP/usr/share/lemonade-server:$SNAP/usr/lib/flm:$SNAP_COMMON/cache/lemonade/bin/llamacpp/vulkan:$SNAP_COMMON/cache/lemonade/bin/whispercpp/vulkan:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      LD_LIBRARY_PATH: "$SNAP/usr/share/lemonade-server:$SNAP_COMMON/cache/lemonade/bin/llamacpp/vulkan:$SNAP_COMMON/cache/lemonade/bin/whispercpp/vulkan:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
       LIBRARY_PATH: "$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR"
       PATH: "$SNAP/usr/bin:$PATH"
       HOME: "$SNAP_COMMON"
@@ -138,30 +127,7 @@ apps:
       XDG_RUNTIME_DIR: "$SNAP_COMMON"
       LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
       LEMONADE_DISABLE_SYSTEMD_JOURNAL: 1
-      FLM_MODEL_PATH: $SNAP_COMMON/flm/models
-      FLM_CONFIG_PATH: $SNAP/usr/share/flm/model_list.json
-      FLM_XCLBIN_PATH: $SNAP/usr/share/flm/xclbins
-  flm:
-    command: usr/bin/flm
-    command-chain: [bin/gpu-2404-wrapper]
-    plugs:
-      - accel
-      - home
-      - removable-media
-      - network
-      - network-bind
-      - opengl
-      - process-control
-      - hardware-observe
-      - system-observe
-    environment:
-      LD_LIBRARY_PATH: "$SNAP/usr/share/lemonade-server:$SNAP/usr/lib/flm:$SNAP/usr/lib/llamacpp/vulkan:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/var/lib/snapd/lib/gl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-      PATH: "$SNAP/usr/bin:$PATH"
-      HOME: "$SNAP_COMMON"
-      LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
-      FLM_MODEL_PATH: $SNAP_COMMON/flm/models
-      FLM_CONFIG_PATH: $SNAP/usr/share/flm/model_list.json
-      FLM_XCLBIN_PATH: $SNAP/usr/share/flm/xclbins
+      #FLM_CONFIG_PATH: "$SNAP_COMMON/cache/lemonade/bin/flm/npu/model_list.json"
 
 parts:
   deps:
@@ -173,6 +139,7 @@ parts:
       - libgomp1
       - libatomic1
       - libcurl4t64
+      - libfftw3-single3
       - libwebsockets19t64
       - curl
       - nodejs # for running @anthropic-ai/claude-code cli.js when auto-downloaded
@@ -248,246 +215,6 @@ parts:
     prime:
       - bin/gpu-2404-wrapper
   
-  xrt:
-    plugin: cmake
-    source: https://github.com/kenvandine/XRT.git
-    source-branch: scan_devices_nonfatal_2.21
-    source-subdir: src
-    cmake-parameters:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DXRT_NPU=1
-      - -DXRT_EXCLUDE_SUB_DIRECTORY=src/python\;src/runtime_src/xocl
-      - -DDCMAKE_BUILD_RPATH_USE_ORIGIN=ON
-    override-build: |
-      [ "$CRAFT_ARCH_BUILD_FOR" != "amd64" ] && exit 0
-      export XRT_VERSION_PATCH=75
-      craftctl default
-    build-packages:
-      - to amd64:
-        - build-essential
-        - cmake
-        - git
-        - pkg-config
-        - libboost-dev
-        - libboost-filesystem-dev
-        - libboost-program-options-dev
-        - libdrm-dev
-        - libncurses-dev
-        - ocl-icd-opencl-dev
-        - opencl-headers
-        - rapidjson-dev
-        - libssl-dev
-        - uuid-dev
-        - libdw-dev
-        - libelf-dev
-        - libsystemd-dev
-        - ocl-icd-dev
-        - systemtap-sdt-dev
-    override-prime: |
-      [ "$CRAFT_ARCH_BUILD_FOR" != "amd64" ] && exit 0
-      craftctl default
-      cd $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
-      for lib in libxrt_core libxrt_coreutil; do
-        ln -f ${lib}.so.2.21.0 ${lib}.so.2
-      done
-    prime:
-      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt*.so*
-
-  xdna-driver:
-    after: [xrt]
-    plugin: nil
-    source: https://github.com/amd/xdna-driver.git
-    source-tag: '2.21.75'
-    build-packages:
-      - to amd64:
-        - build-essential
-        - g++
-        - cmake
-        - git
-        - pkg-config
-        - libboost-dev
-        - libboost-filesystem-dev
-        - libboost-program-options-dev
-        - libdrm-dev
-        - libncurses-dev
-        - ocl-icd-opencl-dev
-        - opencl-headers
-        - rapidjson-dev
-        - libssl-dev
-        - uuid-dev
-        - libdw-dev
-        - libelf-dev
-        - libsystemd-dev
-        - ocl-icd-dev
-        - systemtap-sdt-dev
-    override-pull: |
-      craftctl default
-      git submodule update --init xrt
-      rm -rf xrt/src/python
-    override-build: |
-      [ "$CRAFT_ARCH_BUILD_FOR" != "amd64" ] && exit 0
-      export XRT_VERSION_PATCH=75
-      cmake "$CRAFT_PART_SRC" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=/usr \
-        -DSKIP_KMOD=1
-      cmake --build . -- -j$(nproc)
-      DESTDIR="$CRAFT_PART_INSTALL" cmake --install .
-    override-prime: |
-      [ "$CRAFT_ARCH_BUILD_FOR" != "amd64" ] && exit 0
-      craftctl default
-      cd $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
-      ln -f libxrt_driver_xdna.so.2.21.0 libxrt_driver_xdna.so.2
-    stage:
-      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_driver_xdna*
-    prime:
-      - usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_driver_xdna*
-
-  fastflowlm:
-    after: [xrt]
-    plugin: cmake
-    source: https://github.com/FastFlowLM/FastFlowLM.git
-    source-subdir: src
-    build-packages:
-      - to amd64:
-        - build-essential
-        - g++
-        - cmake
-        - git
-        - curl
-        - libcurl4-openssl-dev
-        - libssl-dev
-        - zlib1g-dev
-        - pkg-config
-        - ninja-build
-        - libboost-program-options-dev
-        - libboost-dev
-        - libavcodec-dev
-        - libavformat-dev
-        - libavutil-dev
-        - libdrm-dev
-        - libfftw3-dev
-        - libreadline-dev
-        - libswresample-dev
-        - libswscale-dev
-        - uuid-dev
-        - rustc-1.89
-        - cargo-1.89
-    stage-packages:
-      - to amd64:
-        - libaom3
-        - libavcodec60
-        - libavformat60
-        - libavutil58
-        - libbluray2
-        - libboost-program-options1.83.0
-        - libcairo-gobject2
-        - libcairo2
-        - libchromaprint1
-        - libcjson1
-        - libcodec2-1.2
-        - libdatrie1
-        - libdav1d7
-        - libfftw3-single3
-        - libfontconfig1
-        - libfribidi0
-        - libgdk-pixbuf-2.0-0
-        - libgme0
-        - libgraphite2-3
-        - libgsm1
-        - libharfbuzz0b
-        - libhwy1t64
-        - libjpeg-turbo8
-        - libjxl0.7
-        - liblcms2-2
-        - libmbedcrypto7t64
-        - libmp3lame0
-        - libmpg123-0t64
-        - libnorm1t64
-        - libogg0
-        - libopenjp2-7
-        - libopenmpt0t64
-        - libopus0
-        - libpango-1.0-0
-        - libpangocairo-1.0-0
-        - libpangoft2-1.0-0
-        - libpgm-5.3-0t64
-        - libpixman-1-0
-        - librabbitmq4
-        - librav1e0
-        - librist4
-        - librsvg2-2
-        - libsharpyuv0
-        - libshine3
-        - libsnappy1v5
-        - libsodium23
-        - libsoxr0
-        - libspeex1
-        - libsrt1.5-gnutls
-        - libssh-gcrypt-4
-        - libsvtav1enc1d1
-        - libswresample4
-        - libswscale7
-        - libthai0
-        - libtheora0
-        - libtwolame0
-        - libudfread0
-        - libva-drm2
-        - libva-x11-2
-        - libva2
-        - libvdpau1
-        - libvorbis0a
-        - libvorbisenc2
-        - libvorbisfile3
-        - libvpl2
-        - libvpx9
-        - libwebp7
-        - libwebpmux3
-        - libx11-6
-        - libx11-xcb1
-        - libx264-164
-        - libx265-199
-        - libxau6
-        - libxcb-dri3-0
-        - libxcb-render0
-        - libxcb-shm0
-        - libxcb1
-        - libxdmcp6
-        - libxext6
-        - libxfixes3
-        - libxrender1
-        - libxvidcore4
-        - libzmq5
-        - libzvbi0t64
-        - ocl-icd-libopencl1
-    override-build: |
-      [ "$CRAFT_ARCH_BUILD_FOR" != "amd64" ] && exit 0
-      export CARGO=/usr/bin/cargo-1.89
-      export RUSTC=/usr/bin/rustc-1.89
-      ln -sf /usr/bin/cargo-1.89 /usr/bin/cargo
-      ln -sf /usr/bin/rustc-1.89 /usr/bin/rustc
-      cd "$CRAFT_PART_SRC/src"
-      cmake --preset linux-snap \
-        -DCMAKE_PREFIX_PATH="$CRAFT_STAGE/usr:/usr" \
-        -DCMAKE_INSTALL_PREFIX=/usr \
-        -DCMAKE_XCLBIN_PREFIX=/usr/share/flm/xclbins \
-        -DXRT_INCLUDE_DIR="$CRAFT_STAGE/usr/include/xrt" \
-        -DXRT_LIB_DIR="$CRAFT_STAGE/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR"
-      cmake --build "$CRAFT_PART_BUILD" -- -j$(nproc)
-      DESTDIR="$CRAFT_PART_INSTALL" cmake --install "$CRAFT_PART_BUILD"
-      install -d "$CRAFT_PART_INSTALL/usr/lib/flm"
-      install -m 0755 "$CRAFT_PART_SRC/src/lib/"*.so "$CRAFT_PART_INSTALL/usr/lib/flm/"
-    override-prime: |
-      [ "$CRAFT_ARCH_BUILD_FOR" != "amd64" ] && exit 0
-      craftctl default
-    prime:
-      - usr/lib/*.so
-      - usr/lib/*/*.so.*
-      - usr/lib/flm/*.so
-      - usr/bin
-      - usr/share/flm
-
   scripts:
     plugin: dump
     source: scripts/
@@ -508,22 +235,3 @@ parts:
       - make
       - patch
       - ripgrep
-
-  arch-stubs:
-    plugin: nil
-    override-prime: |
-      if [ "$CRAFT_ARCH_BUILD_FOR" != "amd64" ]; then
-        # Stub flm binary — fastflowlm is amd64-only
-        mkdir -p $CRAFT_PRIME/usr/bin
-        printf '#!/bin/sh\necho "flm is only available on amd64" >&2\nexit 1\n' \
-          > $CRAFT_PRIME/usr/bin/flm
-        chmod +x $CRAFT_PRIME/usr/bin/flm
-        # Empty stubs for layout bind-file entries — xrt and crt files are amd64-only
-        mkdir -p $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
-        touch $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/crti.o
-        touch $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/crtn.o
-        touch $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libc_nonshared.a
-        touch $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_core.so.2
-        touch $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_coreutil.so.2
-        touch $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libxrt_driver_xdna.so.2
-      fi
