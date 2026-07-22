@@ -95,6 +95,13 @@ apps:
       LIBRARY_PATH: "$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR"
       PATH: "$SNAP/usr/bin:$SNAP_USER_COMMON/tools/bin:$PATH"
       HOME: "$SNAP_COMMON"
+      # lemonade-server writes agent config files (e.g. opencode's
+      # opencode.json) under $HOME/.config before launching the agent, but
+      # $SNAP_COMMON is a root-owned system directory the user can't write
+      # to. Point XDG_CONFIG_HOME at the per-user common dir instead, which
+      # the opencode/pi CLIs also honor, so the config lands where they'll
+      # actually look for it.
+      XDG_CONFIG_HOME: "$SNAP_USER_COMMON/.config"
       LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
   daemon:
     command: usr/bin/lemond
@@ -221,10 +228,12 @@ parts:
     organize:
       claude: usr/bin/claude
       codex: usr/bin/codex
+      opencode: usr/bin/opencode
     override-prime: |
       craftctl default
       chmod +x $CRAFT_PRIME/usr/bin/claude
       chmod +x $CRAFT_PRIME/usr/bin/codex
+      chmod +x $CRAFT_PRIME/usr/bin/opencode
 
   tools:
     plugin: nil
