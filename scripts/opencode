@@ -1,0 +1,113 @@
+#!/bin/bash
+# Shim to launch the user-installed (or auto-downloaded) opencode CLI.
+#
+# Problems this solves in strict confinement:
+#   1. lemonade-server sets HOME=$SNAP_COMMON, so opencode would look for its
+#      data/state in the wrong place.  We derive the real home from
+#      SNAP_USER_COMMON and restore it before exec-ing opencode.  Its config
+#      file is found via XDG_CONFIG_HOME, which is already pointed at
+#      $SNAP_USER_COMMON/.config by the app's environment (see
+#      snapcraft.yaml) -- that's also where lemonade-server itself writes the
+#      "Lemonade" provider config before launching, so the two must agree.
+#   2. If opencode isn't installed yet, we download the platform-specific
+#      opencode-linux-{x64,arm64} tarball from the npm registry using curl
+#      and extract the bundled binary directly -- no Node.js required.
+
+OPENCODE_BIN="$SNAP_USER_COMMON/tools/bin/opencode"
+
+_npm_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64) echo "x64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        *) echo "" ;;
+    esac
+}
+
+_install_opencode() {
+    echo "opencode not found at $OPENCODE_BIN" >&2
+    echo "Downloading opencode-ai from the npm registry..." >&2
+
+    mkdir -p "$SNAP_USER_COMMON/tools/bin"
+
+    local arch pkg
+    arch=$(_npm_arch)
+    if [ -z "$arch" ]; then
+        echo "ERROR: unsupported architecture '$(uname -m)' for opencode." >&2
+        exit 1
+    fi
+    pkg="opencode-linux-${arch}"
+
+    # Resolve the latest version tag and associated tarball URL and integrity
+    # (dist.integrity, format "sha512-<base64>") from npm metadata.
+    local metadata version tarball integrity
+    metadata=$(curl -sf "https://registry.npmjs.org/${pkg}/latest")
+    version=$(printf '%s\n' "$metadata" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)
+    tarball=$(printf '%s\n' "$metadata" | sed -n 's/.*"tarball":"\([^"]*\)".*/\1/p' | head -1)
+    integrity=$(printf '%s\n' "$metadata" | sed -n 's/.*"integrity":"\([^"]*\)".*/\1/p' | head -1)
+
+    if [ -z "$version" ] || [ -z "$tarball" ] || [ -z "$integrity" ]; then
+        echo "ERROR: could not resolve ${pkg} metadata from npm registry." >&2
+        echo "Check your network connection, or install manually:" >&2
+        echo "  npm install -g opencode-ai --prefix '$SNAP_USER_COMMON/tools'" >&2
+        exit 1
+    fi
+
+    echo "Downloading opencode v${version} (${pkg})..." >&2
+    local tmp_tgz
+    tmp_tgz=$(mktemp "${TMPDIR:-/tmp}/opencode.XXXXXX.tgz") || {
+        echo "ERROR: failed to create temporary file for ${pkg} download." >&2
+        exit 1
+    }
+
+    if ! curl -fsSL "$tarball" -o "$tmp_tgz"; then
+        echo "ERROR: download of ${pkg} v${version} failed." >&2
+        rm -f "$tmp_tgz"
+        exit 1
+    fi
+
+    # Verify tarball integrity against the npm dist.integrity field (sha512-<base64>).
+    local expected_prefix="sha512-"
+    local expected actual
+    expected="$integrity"
+    if [ "${expected#"$expected_prefix"}" = "$expected" ]; then
+        echo "ERROR: unsupported integrity format '$integrity' (expected sha512-*)." >&2
+        rm -f "$tmp_tgz"
+        exit 1
+    fi
+    expected="${expected#"$expected_prefix"}"
+
+    if ! actual=$(openssl dgst -sha512 -binary "$tmp_tgz" 2>/dev/null | openssl base64 -A); then
+        echo "ERROR: failed to compute SHA-512 checksum for ${pkg} tarball." >&2
+        rm -f "$tmp_tgz"
+        exit 1
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+        echo "ERROR: integrity check failed for ${pkg} v${version} tarball." >&2
+        echo "Expected (from npm dist.integrity): $expected" >&2
+        echo "Actual (computed):                $actual" >&2
+        rm -f "$tmp_tgz"
+        exit 1
+    fi
+
+    # The platform tarball ships the binary at package/bin/opencode; extract it directly.
+    if ! tar -xzOf "$tmp_tgz" package/bin/opencode > "$OPENCODE_BIN"; then
+        echo "ERROR: failed to extract ${pkg} v${version} binary." >&2
+        rm -f "$tmp_tgz"
+        rm -f "$OPENCODE_BIN"
+        exit 1
+    fi
+
+    rm -f "$tmp_tgz"
+    chmod +x "$OPENCODE_BIN"
+    echo "opencode v${version} installed to $OPENCODE_BIN" >&2
+}
+
+if [ ! -x "$OPENCODE_BIN" ]; then
+    _install_opencode
+fi
+
+# Use SNAP_USER_COMMON as HOME so opencode stores its data/state within the
+# snap's user data directory, which is accessible under strict confinement
+# without a personal-files plug.
+exec env HOME="$SNAP_USER_COMMON" "$OPENCODE_BIN" "$@"
