@@ -102,6 +102,34 @@ To use models from your home directory or removable media, the snap has access t
 - `$HOME` (via the `home` plug)
 - `/media` and `/mnt` (via the `removable-media` plug)
 
+### API authentication
+
+By default, the server's API endpoints are unauthenticated. To require a
+bearer token, set an API key via snap config:
+
+```bash
+sudo snap set lemonade-server lemonade-api-key=your-secret-key
+```
+
+This secures the regular API endpoints (`/api/*`, `/v0/*`, `/v1/*`). To also
+separate access to internal control endpoints (`/internal/*`, e.g. shutdown
+and configuration), set a distinct admin key:
+
+```bash
+sudo snap set lemonade-server lemonade-admin-api-key=your-admin-secret
+```
+
+If only an admin key is set, it also authenticates the regular endpoints. The
+daemon restarts automatically to pick up the new key. To clear a key:
+
+```bash
+sudo snap unset lemonade-server lemonade-api-key
+sudo snap unset lemonade-server lemonade-admin-api-key
+```
+
+See the [authentication guide](https://lemonade-server.ai/) for full details
+on the auth hierarchy.
+
 ### Manual server control
 
 ```bash
