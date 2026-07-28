@@ -130,6 +130,32 @@ sudo snap unset lemonade-server lemonade-admin-api-key
 See the [authentication guide](https://lemonade-server.ai/) for full details
 on the auth hierarchy.
 
+### Allowed origins (CORS)
+
+By default, only loopback origins (`localhost`, `127.0.0.1`, `[::1]`, and
+`tauri.localhost`) are allowed to connect to the server. To allow additional
+web origins (for CORS headers and WebSocket origin validation), set a
+comma-separated list of origins via snap config:
+
+```bash
+sudo snap set lemonade-server lemonade-allowed-origins=https://app.lemonade.dev,http://localhost:3000
+```
+
+To allow any origin, set it to `*`. Note that this is risky without an API
+key configured, since it permits any website running in a user's browser to
+make requests to your local Lemonade server. Non-local plain-HTTP origins are
+also vulnerable to man-in-the-middle attacks, so HTTPS is strongly
+recommended for remote origins.
+
+The daemon restarts automatically to pick up the new value. To clear it:
+
+```bash
+sudo snap unset lemonade-server lemonade-allowed-origins
+```
+
+See the [configuration guide](https://lemonade-server.ai/docs/guide/configuration/#allowed-origins)
+for full details.
+
 ### Manual server control
 
 ```bash
