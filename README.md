@@ -102,6 +102,60 @@ To use models from your home directory or removable media, the snap has access t
 - `$HOME` (via the `home` plug)
 - `/media` and `/mnt` (via the `removable-media` plug)
 
+### API authentication
+
+By default, the server's API endpoints are unauthenticated. To require a
+bearer token, set an API key via snap config:
+
+```bash
+sudo snap set lemonade-server lemonade-api-key=your-secret-key
+```
+
+This secures the regular API endpoints (`/api/*`, `/v0/*`, `/v1/*`). To also
+separate access to internal control endpoints (`/internal/*`, e.g. shutdown
+and configuration), set a distinct admin key:
+
+```bash
+sudo snap set lemonade-server lemonade-admin-api-key=your-admin-secret
+```
+
+If only an admin key is set, it also authenticates the regular endpoints. The
+daemon restarts automatically to pick up the new key. To clear a key:
+
+```bash
+sudo snap unset lemonade-server lemonade-api-key
+sudo snap unset lemonade-server lemonade-admin-api-key
+```
+
+See the [authentication guide](https://lemonade-server.ai/) for full details
+on the auth hierarchy.
+
+### Allowed origins (CORS)
+
+By default, only loopback origins (`localhost`, `127.0.0.1`, `[::1]`, and
+`tauri.localhost`) are allowed to connect to the server. To allow additional
+web origins (for CORS headers and WebSocket origin validation), set a
+comma-separated list of origins via snap config:
+
+```bash
+sudo snap set lemonade-server lemonade-allowed-origins=https://app.lemonade.dev,http://localhost:3000
+```
+
+To allow any origin, set it to `*`. Note that this is risky without an API
+key configured, since it permits any website running in a user's browser to
+make requests to your local Lemonade server. Non-local plain-HTTP origins are
+also vulnerable to man-in-the-middle attacks, so HTTPS is strongly
+recommended for remote origins.
+
+The daemon restarts automatically to pick up the new value. To clear it:
+
+```bash
+sudo snap unset lemonade-server lemonade-allowed-origins
+```
+
+See the [configuration guide](https://lemonade-server.ai/docs/guide/configuration/#allowed-origins)
+for full details.
+
 ### Manual server control
 
 ```bash

@@ -1,0 +1,10 @@
+#!/bin/bash
+# Restart the daemon whenever lemonade-api-key / lemonade-admin-api-key /
+# lemonade-allowed-origins are changed via `snap set`/`snap unset`, so the
+# new value takes effect without requiring the user to restart the service
+# manually.
+set -e
+
+if snapctl services "$SNAP_NAME.daemon" 2>/dev/null | tail -n +2 | awk '{print $3}' | grep -q active; then
+    snapctl restart "$SNAP_NAME.daemon"
+fi
