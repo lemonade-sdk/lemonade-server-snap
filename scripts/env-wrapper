@@ -1,13 +1,15 @@
 #!/bin/bash
-# Exports optional LEMONADE_API_KEY / LEMONADE_ADMIN_API_KEY from snap config
-# (set via `snap set lemonade-server lemonade-api-key=...`) before handing
-# off to the rest of the command chain.
+# Exports optional LEMONADE_API_KEY / LEMONADE_ADMIN_API_KEY / LEMONADE_ALLOWED_ORIGINS
+# from snap config (set via `snap set lemonade-server lemonade-api-key=...`)
+# before handing off to the rest of the command chain.
 set -e
 
 api_key="$(snapctl get lemonade-api-key)"
 admin_api_key="$(snapctl get lemonade-admin-api-key)"
+allowed_origins="$(snapctl get lemonade-allowed-origins)"
 
 [ -n "$api_key" ] && export LEMONADE_API_KEY="$api_key"
 [ -n "$admin_api_key" ] && export LEMONADE_ADMIN_API_KEY="$admin_api_key"
+[ -n "$allowed_origins" ] && export LEMONADE_ALLOWED_ORIGINS="$allowed_origins"
 
 exec "$@"
