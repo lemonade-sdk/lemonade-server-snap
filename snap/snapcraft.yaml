@@ -14,7 +14,7 @@ description: |
     image generation, and 3D generation
   - Automatic backend selection based on available hardware — CUDA, ROCm, Vulkan,
     NPU, and CPU backends download on demand
-  - 77+ built-in models (GGUF, FLM, ONNX) with `lemonade pull` / `lemonade list`
+  - 77+ built-in models (GGUF, FLM, ONNX) with `lemonade-server pull` / `lemonade-server list`
     for model management
   - Cloud offload: route inference to OpenAI-compatible providers alongside 
     local models
