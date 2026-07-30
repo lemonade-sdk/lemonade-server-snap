@@ -3,22 +3,32 @@ base: core24
 summary: Local AI server with OpenAI-compatible API
 title: Lemonade Server
 description: |
-  Lemonade Server is a lightweight, high-performance local AI inference server
-  that provides an OpenAI-compatible API for running large language models on
-  your own hardware.
+  Lemonade is a local AI server that provides cloud-API-equivalent capabilities
+  (chat, coding, speech, image generation) running 100% locally on your own
+  hardware. It exposes OpenAI, Anthropic, and Ollama-compatible APIs on
+  localhost:13305, connectable to hundreds of apps.
 
   **Features:**
-  - OpenAI-compatible REST API (chat completions, embeddings, etc.)
-  - Multiple backend support: Vulkan, ROCm (AMD GPUs), and CPU
-  - Automatic model management and caching
-  - Support for GGUF models from Hugging Face
-  - Low latency local inference
-  - Runs as a background service
+  - OpenAI, Anthropic, and Ollama-compatible APIs (chat completions, embeddings, etc.)
+  - Multi-modal inference: LLMs, speech-to-text, text-to-speech, audio generation,
+    image generation, and 3D generation
+  - Automatic backend selection based on available hardware — CUDA, ROCm, Vulkan,
+    NPU, and CPU backends download on demand
+  - 77+ built-in models (GGUF, FLM, ONNX) with `lemonade pull` / `lemonade list`
+    for model management
+  - Cloud offload: route inference to OpenAI-compatible providers alongside 
+    local models
+  - MCP (Model Context Protocol) client and server support
+  - Built-in Prometheus metrics endpoint
+  - Runs as a background service with auto-restart on failure
 
   **Supported Hardware:**
-  - AMD GPUs: RDNA3 (RX 7000), RDNA4 (RX 9000), Strix Point/Halo APUs
-  - Any Vulkan-capable GPU
+  - AMD GPUs: RDNA2/3/4 (RX 6000/7000/9000), Strix Point/Halo APUs, Instinct MI100/MI200/MI300X/MI350X via ROCm
+  - AMD XDNA2 NPUs (Ryzen AI) for LLM and speech inference
+  - NVIDIA GPUs: Turing (sm_75) and newer via CUDA (Ampere, Ada Lovelace, Hopper, Blackwell)
+  - Cross-vendor GPUs via Vulkan (AMD, NVIDIA, Intel, Qualcomm Adreno on ARM64)
   - CPU fallback for systems without GPU acceleration
+  - Both amd64 (x86_64) and arm64 (aarch64) architectures
 
   **Quick Start:**
   The server starts automatically after installation. Access the API at:
