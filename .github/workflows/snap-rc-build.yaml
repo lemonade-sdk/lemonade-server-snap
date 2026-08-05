@@ -1,0 +1,65 @@
+name: Snap Release Candidate Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Upstream release version to build an RC from (e.g. v11.5.2)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+
+    - name: Point lemonade-server part at the release branch and set RC version
+      run: |
+        set -eu
+        RELEASE_VERSION="${{ inputs.release_version }}"
+        RELEASE_BRANCH="release-${RELEASE_VERSION}"
+        RC_VERSION="${RELEASE_VERSION}-rc"
+
+        SOURCE_LINE='    source: https://github.com/lemonade-sdk/lemonade.git'
+        if ! grep -qF "$SOURCE_LINE" snap/snapcraft.yaml; then
+          echo "Could not find lemonade-server source line in snap/snapcraft.yaml" >&2
+          exit 1
+        fi
+        sed -i "s|^${SOURCE_LINE}\$|${SOURCE_LINE}\n    source-branch: ${RELEASE_BRANCH}|" snap/snapcraft.yaml
+
+        DESCRIBE_LINE='        VERSION=$(git describe --tags --abbrev=10)'
+        if ! grep -qF "$DESCRIBE_LINE" snap/snapcraft.yaml; then
+          echo "Could not find version fallback line in snap/snapcraft.yaml" >&2
+          exit 1
+        fi
+        sed -i "s|^${DESCRIBE_LINE}\$|        VERSION=${RC_VERSION}|" snap/snapcraft.yaml
+
+        echo "Building RC for lemonade-server branch ${RELEASE_BRANCH}, snap version ${RC_VERSION}"
+
+    - uses: canonical/action-build@v1.3.0
+      id: build
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: snap-rc-${{ matrix.arch }}
+        path: ${{ steps.build.outputs.snap }}
+        retention-days: 5
+
+    - uses: snapcore/action-publish@v1
+      env:
+        SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.STORE_LOGIN }}
+      with:
+        snap: ${{ steps.build.outputs.snap }}
+        release: candidate
