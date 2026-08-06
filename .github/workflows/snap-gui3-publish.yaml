@@ -1,0 +1,37 @@
+name: Snap GUI3 Preview Publish
+
+on:
+  schedule:
+    - cron: '0 0,6,12,18 * * *'  # Run 4 times a day (every 6 hours UTC)
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build-and-publish:
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+        ref: GUI3_merging
+    - name: Pin lemonade-server source to GUI3_merging branch
+      run: |
+        # Add source-branch attribute so snapcraft checks out GUI3_merging
+        sed -i '/source: https:\/\/github\.com\/lemonade-sdk\/lemonade\.git$/a\    source-branch: GUI3_merging' snap/snapcraft.yaml
+        grep -A2 'source:' snap/snapcraft.yaml | head -6
+    - uses: canonical/action-build@v1.3.0
+      id: build
+    - uses: snapcore/action-publish@v1
+      env:
+        SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.STORE_LOGIN }}
+      with:
+        snap: ${{ steps.build.outputs.snap }}
+        release: latest/stable/preview-gui3
