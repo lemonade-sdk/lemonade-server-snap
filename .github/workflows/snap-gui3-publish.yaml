@@ -21,7 +21,6 @@ jobs:
       with:
         fetch-depth: 0
         fetch-tags: true
-        ref: GUI3_merging
     - name: Pin lemonade-server source to GUI3_merging branch
       run: |
         # Add source-branch attribute so snapcraft checks out GUI3_merging
