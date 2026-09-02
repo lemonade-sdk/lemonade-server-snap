@@ -59,6 +59,8 @@ layout:
   # Bind the snap's copy so node can find them at runtime.
   /usr/share/nodejs:
     bind: $SNAP/usr/share/nodejs
+  /usr/share/misc/pci.ids:
+    bind-file: $SNAP/usr/share/misc/pci.ids
   # crt startup/termination objects needed by Triton JIT (ROCm clang passes
   # them as absolute paths to ld.lld, so they must exist at the system path).
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/crti.o:
@@ -168,6 +170,8 @@ parts:
       - libnuma1 # SD backends need this at runtime
       - libnode109
       - xz-utils
+      - pciutils # Provides lspci; lemonade's NVIDIA GPU detection falls back to it
+      - pci.ids # PCI vendor/device name database used by lspci above
       - to amd64:
         - libc6-dev # C headers (stdlib.h etc.) needed by ROCm bundled clang for Triton JIT
         - linux-libc-dev # Linux kernel headers needed by HIP runtime
@@ -218,6 +222,13 @@ parts:
         VERSION=$(git describe --tags --abbrev=10)
         craftctl set version=$VERSION
       fi
+      # Under snap strict confinement, /proc/driver/nvidia/gpus is unreadable
+      # (not covered by hardware-observe) but /sys/class/drm is, so upstream's
+      # /sys/class/drm fallback tier always "succeeds" first with a bare PCI-ID
+      # placeholder name, short-circuiting the lspci tier below it that would
+      # otherwise recover a real marketing name lemonade can resolve to an
+      # sm_XX arch. Reorder those two tiers so lspci is tried first.
+      git apply "$CRAFT_PROJECT_DIR/patches/reorder_nvidia_gpu_fallback.patch"
     override-build: |
       export PATH="/snap/node/current/bin:$PATH"
       craftctl default
