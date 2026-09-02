@@ -1,0 +1,111 @@
+diff --git a/src/cpp/server/system_info.cpp b/src/cpp/server/system_info.cpp
+index b14b65f..127d0f8 100644
+--- a/src/cpp/server/system_info.cpp
++++ b/src/cpp/server/system_info.cpp
+@@ -3226,10 +3226,57 @@ std::vector<GPUInfo> LinuxSystemInfo::get_nvidia_gpu_devices() {
+         }
+     }
+ 
++    // Fallback: lspci (for systems where nvidia-smi is unavailable). Tried
++    // before the /sys/class/drm tier below because it can recover a real
++    // marketing name (e.g. "GeForce RTX 3060") that
++    // identify_cuda_arch_from_name() can resolve to a supported sm_XX arch,
++    // whereas /sys/class/drm only has bare PCI vendor/device IDs.
++    {
++        FILE* pipe = popen("lspci 2>/dev/null | grep -iE 'vga|3d|display'", "r");
++        if (!pipe) {
++            GPUInfo gpu;
++            gpu.available = false;
++            gpu.error = "Failed to execute lspci command";
++            gpus.push_back(gpu);
++            return gpus;
++        }
++
++        char buffer[512];
++        std::vector<std::string> lspci_lines;
++        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
++            lspci_lines.push_back(buffer);
++        }
++        pclose(pipe);
++
++        std::string driver_version = get_nvidia_driver_version();
++        for (const auto& line : lspci_lines) {
++            if (line.find("NVIDIA") != std::string::npos || line.find("nvidia") != std::string::npos) {
++                std::string name;
++                size_t pos = line.find(": ");
++                if (pos != std::string::npos) {
++                    name = line.substr(pos + 2);
++                    if (!name.empty() && name.back() == '\n') name.pop_back();
++                } else {
++                    name = line;
++                }
++
++                GPUInfo gpu;
++                gpu.name = name;
++                gpu.available = true;
++                gpu.driver_version = driver_version.empty() ? "Unknown" : driver_version;
++                double vram = get_nvidia_vram();
++                if (vram > 0.0) gpu.vram_gb = vram;
++                gpus.push_back(gpu);
++            }
++        }
++        if (!gpus.empty()) return gpus;
++    }
++
+     // Fallback: /sys/class/drm — readable via hardware-observe; works in snap strict
+     // confinement where /proc/driver/nvidia/ access is restricted.  Provides GPU
+     // presence and device IDs but not human-readable names, so name defaults to a
+-    // placeholder that downstream callers can refine.
++    // placeholder that downstream callers can refine. Tried last since lspci
++    // above gives a real name when it can run.
+     {
+         fs::path drm_path = "/sys/class/drm";
+         std::error_code ec;
+@@ -3267,46 +3314,7 @@ std::vector<GPUInfo> LinuxSystemInfo::get_nvidia_gpu_devices() {
+         }
+     }
+ 
+-    // Fallback: lspci (for systems where nvidia-smi is unavailable)
+-    FILE* pipe = popen("lspci 2>/dev/null | grep -iE 'vga|3d|display'", "r");
+-    if (!pipe) {
+-        GPUInfo gpu;
+-        gpu.available = false;
+-        gpu.error = "Failed to execute lspci command";
+-        gpus.push_back(gpu);
+-        return gpus;
+-    }
+-
+-    char buffer[512];
+-    std::vector<std::string> lspci_lines;
+-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+-        lspci_lines.push_back(buffer);
+-    }
+-    pclose(pipe);
+-
+-    for (const auto& line : lspci_lines) {
+-        if (line.find("NVIDIA") != std::string::npos || line.find("nvidia") != std::string::npos) {
+-            std::string name;
+-            size_t pos = line.find(": ");
+-            if (pos != std::string::npos) {
+-                name = line.substr(pos + 2);
+-                if (!name.empty() && name.back() == '\n') name.pop_back();
+-            } else {
+-                name = line;
+-            }
+-
+-            GPUInfo gpu;
+-            gpu.name = name;
+-            gpu.available = true;
+-            gpu.driver_version = get_nvidia_driver_version();
+-            if (gpu.driver_version.empty()) gpu.driver_version = "Unknown";
+-            double vram = get_nvidia_vram();
+-            if (vram > 0.0) gpu.vram_gb = vram;
+-            gpus.push_back(gpu);
+-        }
+-    }
+-
+-    if (gpus.empty()) {
++    {
+         GPUInfo gpu;
+         gpu.available = false;
+         gpu.error = "No NVIDIA discrete GPU found";
