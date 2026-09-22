@@ -165,6 +165,7 @@ parts:
       - node-undici # nodejs externalized builtin
       - node-acorn # nodejs externalized builtins (acorn + acorn-walk)
       - unzip # For extracting backends at runtime
+      - libarchive-tools # bsdtar, used in place of tar below
       - libdrm-amdgpu1 # SD backends need this at runtime
       - libnuma1 # SD backends need this at runtime
       - libnode109
@@ -180,6 +181,9 @@ parts:
     override-prime: |
       craftctl default
       ln -sf libgcc_s.so.1 $CRAFT_PRIME/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libgcc_s.so
+      # core24's tar calls openat2(2), which snapd's seccomp always denies (EPERM),
+      # breaking backend-archive extraction. bsdtar doesn't use it.
+      ln -sf bsdtar $CRAFT_PRIME/usr/bin/tar
     override-build: |
       set +u # For unbound variables
       # workaround for build.snapcraft.io builds
