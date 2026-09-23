@@ -43,8 +43,8 @@ license: Apache-2.0
 
 website: https://lemonade-server.ai
 source-code: https://github.com/lemonade-sdk/lemonade
-issues: https://github.com/kenvandine/lemonade-server-snap/issues
-contact: https://github.com/kenvandine/lemonade-server-snap/issues
+issues: https://github.com/lemonade-sdk/lemonade-server-snap/issues
+contact: https://github.com/lemonade-sdk/lemonade-server-snap/issues
 
 platforms:
   amd64:
@@ -146,7 +146,6 @@ apps:
       XDG_RUNTIME_DIR: "$SNAP_COMMON"
       LEMONADE_CACHE_DIR: "$SNAP_COMMON/cache/lemonade"
       LEMONADE_DISABLE_SYSTEMD_JOURNAL: 1
-      #FLM_CONFIG_PATH: "$SNAP_COMMON/cache/lemonade/bin/flm/npu/model_list.json"
 
 parts:
   deps:
