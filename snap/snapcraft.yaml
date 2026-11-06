@@ -254,16 +254,21 @@ parts:
       codex: usr/bin/codex
       opencode: usr/bin/opencode
       env-wrapper: bin/env-wrapper
-      # Stand-in for podman: lemond's container backends run from an unpacked
-      # OCI image, since strict confinement can't run a container runtime.
-      podman: usr/bin/podman
     override-prime: |
       craftctl default
       chmod +x $CRAFT_PRIME/usr/bin/claude
       chmod +x $CRAFT_PRIME/usr/bin/codex
       chmod +x $CRAFT_PRIME/usr/bin/opencode
-      chmod +x $CRAFT_PRIME/usr/bin/podman
       chmod +x $CRAFT_PRIME/bin/env-wrapper
+
+  # Stand-in for podman: lemond's container backends run from an unpacked OCI
+  # image, since strict confinement can't run a container runtime.
+  podman-shim:
+    plugin: rust
+    source: podman-shim
+    rust-channel: stable
+    organize:
+      bin/podman: usr/bin/podman
 
   tools:
     plugin: nil
