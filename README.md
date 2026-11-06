@@ -179,6 +179,16 @@ sudo snap stop --disable lemonade-server.daemon
 lemonade-server --help
 ```
 
+## Container Backends
+
+Strict confinement can't run Podman or Docker, so the snap ships a small
+`podman` stand-in (`scripts/podman`) that implements only the commands lemond's
+container backends (for example `llamacpp:nathanw`) use. It pulls the
+digest-pinned image straight from the registry, unpacks it under
+`$SNAP_COMMON/oci`, and runs the image's program through the image's own
+dynamic loader. The snap's confinement is the sandbox, and GPU access comes
+from the existing `opengl`/`accel` plugs. Servers listen on loopback only.
+
 ## Connecting to Applications
 
 Lemonade Server is compatible with any application that supports the OpenAI API:

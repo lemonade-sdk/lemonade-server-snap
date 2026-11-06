@@ -1,0 +1,473 @@
+#!/usr/bin/python3
+"""A minimal `podman` stand-in for the strictly confined lemonade-server snap.
+
+Strict confinement cannot run a container runtime (no mount/unshare/pivot_root),
+but lemond's container backends only need an OCI image's files and a process
+started from them. This shim implements just the podman subset lemond uses
+(info, pull, image inspect, rmi, network create/rm, run, stop, rm, inspect):
+images are pulled from the registry and unpacked under $SNAP_COMMON, and "run"
+starts the image's program through the image's own dynamic loader, so the snap's
+own confinement is the sandbox.
+"""
+import ctypes
+import hashlib
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.error
+import urllib.request
+
+ROOT = os.path.join(os.environ.get("SNAP_COMMON", "/var/tmp"), "oci")
+ALLOWED = ("docker.io/kyuz0/", "ghcr.io/peonist-ai/")
+MANIFEST_TYPES = ",".join([
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+])
+ARCHES = {"x86_64": "amd64", "aarch64": "arm64"}
+
+
+def die(msg, code=125):
+    print("Error: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def image_dir(ref):
+    return os.path.join(ROOT, "images", hashlib.sha256(ref.encode()).hexdigest()[:24])
+
+
+def container_file(name):
+    return os.path.join(ROOT, "containers", name + ".json")
+
+
+def machine_arch():
+    return ARCHES.get(os.uname().machine, os.uname().machine)
+
+
+# ---------------------------------------------------------------- registry
+
+def split_ref(ref):
+    if not ref.startswith(ALLOWED):
+        die("image %s is not from an allowed registry namespace" % ref)
+    registry, _, rest = ref.partition("/")
+    if "@" not in rest:
+        die("image %s is not pinned by digest" % ref)
+    repo, _, digest = rest.partition("@")
+    return registry, repo, digest
+
+
+class Registry:
+    def __init__(self, registry, repo):
+        self.host = "registry-1.docker.io" if registry == "docker.io" else registry
+        self.repo = repo
+        self.token = None
+
+    def _open(self, url, accept=""):
+        for attempt in (0, 1):
+            req = urllib.request.Request(url, headers={"Accept": accept})
+            if self.token:
+                req.add_header("Authorization", "Bearer " + self.token)
+            try:
+                return urllib.request.urlopen(req, timeout=60)
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and attempt == 0:
+                    self._auth(e.headers.get("WWW-Authenticate", ""))
+                    continue
+                raise
+
+    def _auth(self, challenge):
+        params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+        if "realm" not in params:
+            die("registry requires unsupported authentication")
+        q = "service=%s&scope=repository:%s:pull" % (params.get("service", ""), self.repo)
+        with urllib.request.urlopen(params["realm"] + "?" + q, timeout=60) as r:
+            data = json.load(r)
+        self.token = data.get("token") or data.get("access_token")
+
+    def manifest(self, digest):
+        url = "https://%s/v2/%s/manifests/%s" % (self.host, self.repo, digest)
+        with self._open(url, MANIFEST_TYPES) as r:
+            body = r.read()
+        # The digest the reference names must match what was served.
+        if digest.startswith("sha256:") and "sha256:" + hashlib.sha256(body).hexdigest() != digest:
+            die("manifest digest mismatch for " + digest)
+        return json.loads(body)
+
+    def blob(self, digest):
+        return self._open("https://%s/v2/%s/blobs/%s" % (self.host, self.repo, digest))
+
+
+class Verified:
+    """File-like wrapper that checks the blob's sha256 as it streams."""
+
+    def __init__(self, resp, digest):
+        self.resp, self.digest, self.h = resp, digest, hashlib.sha256()
+
+    def read(self, n=-1):
+        b = self.resp.read(n)
+        self.h.update(b)
+        return b
+
+    def check(self):
+        while self.read(1 << 20):
+            pass
+        if "sha256:" + self.h.hexdigest() != self.digest:
+            die("blob digest mismatch for " + self.digest)
+
+
+def unpack_layer(fileobj, dest):
+    with tarfile.open(fileobj=fileobj, mode="r|*") as tf:
+        for m in tf:
+            parts = os.path.normpath(m.name).split("/")
+            if parts[0] in ("", "..") or ".." in parts:
+                continue
+            base = parts[-1]
+            parent = os.path.join(dest, *parts[:-1])
+            if base == ".wh..wh..opq":
+                if os.path.isdir(parent):
+                    for entry in os.listdir(parent):
+                        p = os.path.join(parent, entry)
+                        shutil.rmtree(p) if os.path.isdir(p) and not os.path.islink(p) else os.remove(p)
+                continue
+            if base.startswith(".wh."):
+                target = os.path.join(parent, base[4:])
+                if os.path.islink(target) or os.path.isfile(target):
+                    os.remove(target)
+                elif os.path.isdir(target):
+                    shutil.rmtree(target)
+                continue
+            if m.isdev() or m.isfifo():
+                continue
+            target = os.path.join(dest, *parts)
+            os.makedirs(parent, exist_ok=True)
+            if os.path.lexists(target) and not (m.isdir() and os.path.isdir(target)):
+                if os.path.isdir(target) and not os.path.islink(target):
+                    shutil.rmtree(target)
+                else:
+                    os.remove(target)
+            # Directories must stay writable for later layers and for removal.
+            m.mode |= 0o700 if m.isdir() else 0o600
+            m.uid = m.gid = 0
+            tf.extract(m, dest, set_attrs=True, filter="tar")
+
+
+def rewrite_vulkan_manifests(rootfs):
+    """ICD manifests name their driver by absolute path in the image."""
+    for sub in ("usr/share/vulkan/icd.d", "etc/vulkan/icd.d"):
+        d = os.path.join(rootfs, sub)
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            p = os.path.join(d, name)
+            try:
+                with open(p) as f:
+                    data = json.load(f)
+                lib = data["ICD"]["library_path"]
+            except (OSError, ValueError, KeyError):
+                continue
+            if lib.startswith("/"):
+                data["ICD"]["library_path"] = rootfs + lib
+                with open(p, "w") as f:
+                    json.dump(data, f)
+
+
+def cmd_pull(args):
+    refs = [a for a in args if not a.startswith("-")]
+    if len(refs) != 1:
+        die("pull takes one image")
+    ref = refs[0]
+    registry, repo, digest = split_ref(ref)
+    reg = Registry(registry, repo)
+    m = reg.manifest(digest)
+    if "manifests" in m:
+        pick = [x for x in m["manifests"] if x.get("platform", {}).get("architecture") == machine_arch()
+                and x.get("platform", {}).get("os") == "linux"]
+        if not pick:
+            die("no linux/%s image in %s" % (machine_arch(), ref))
+        m = reg.manifest(pick[0]["digest"])
+    dest = image_dir(ref)
+    staging = dest + ".partial"
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging)
+    rootfs = os.path.join(staging, "rootfs")
+    os.makedirs(rootfs)
+    for layer in m["layers"]:
+        d = layer["digest"]
+        print("Copying blob " + d, flush=True)
+        v = Verified(reg.blob(d), d)
+        unpack_layer(v, rootfs)
+        v.check()
+        print("Copying blob %s done" % d, flush=True)
+    rewrite_vulkan_manifests(rootfs)
+    with open(os.path.join(staging, "image.json"), "w") as f:
+        json.dump({"ref": ref, "id": digest}, f)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.rename(staging, dest)
+    print(digest)
+
+
+def cmd_image(args):
+    if args[:1] == ["inspect"]:
+        ref = args[-1]
+        meta = os.path.join(image_dir(ref), "image.json")
+        if not os.path.exists(meta):
+            die("no such image: " + ref, 1)
+        print(json.load(open(meta))["id"])
+        return
+    die("unsupported image command")
+
+
+def cmd_rmi(args):
+    ref = args[-1]
+    d = image_dir(ref)
+    if not os.path.isdir(d):
+        die("no such image: " + ref, 1)
+    chmod_tree(d)
+    shutil.rmtree(d)
+
+
+def chmod_tree(path):
+    for dp, dns, _ in os.walk(path):
+        for dn in dns:
+            try:
+                os.chmod(os.path.join(dp, dn), 0o700)
+            except OSError:
+                pass
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
+# --------------------------------------------------------------- run / stop
+
+def cmd_run(args):
+    name, port_arg, env, mounts = None, None, {}, []
+    i = 0
+    image = None
+    while i < len(args):
+        a = args[i]
+        if a in ("--name", "-v", "--env", "-p", "--label", "--network", "--device",
+                 "--group-add", "--annotation", "--security-opt"):
+            v = args[i + 1]
+            i += 2
+            if a == "--name":
+                name = v
+            elif a == "-p":
+                port_arg = v
+            elif a == "--env":
+                k, _, val = v.partition("=")
+                env[k] = val
+            elif a == "-v":
+                src, dst = v.split(":")[:2]
+                mounts.append((src, dst))
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        image = a
+        i += 1
+        break
+    command = args[i:]
+    if not name or not image or not command:
+        die("run needs --name, an image and a command")
+
+    d = image_dir(image)
+    rootfs = os.path.join(d, "rootfs")
+    if not os.path.exists(os.path.join(d, "image.json")):
+        die("image %s is not installed" % image)
+
+    # Stand in for the /mnt/models bind mounts with a directory of symlinks.
+    run_dir = os.path.join(ROOT, "run", name)
+    shutil.rmtree(run_dir, ignore_errors=True)
+    models = os.path.join(run_dir, "models")
+    os.makedirs(models)
+    for src, dst in mounts:
+        rel = os.path.relpath(dst, "/mnt/models")
+        link = os.path.join(models, rel)
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink(src, link)
+
+    def fix(arg):
+        return arg.replace("/mnt/models", models) if "/mnt/models" in arg else arg
+
+    command = [fix(a) for a in command]
+    # The container publishes this port on loopback only; without a container
+    # network namespace, binding 0.0.0.0 would expose it on every interface.
+    bind = "127.0.0.1" if port_arg and port_arg.startswith("127.0.0.1:") else None
+    if bind:
+        for j, a in enumerate(command[:-1]):
+            if a == "--host" and command[j + 1] == "0.0.0.0":
+                command[j + 1] = bind
+
+    libdirs = [os.path.join(rootfs, p) for p in
+               ("usr/local/lib64", "usr/local/lib", "usr/lib64", "usr/lib", "lib64", "lib")]
+    loader = None
+    for cand in ("usr/lib64/ld-linux-x86-64.so.2", "usr/lib/ld-linux-aarch64.so.1",
+                 "usr/lib64/ld-linux-aarch64.so.1", "lib64/ld-linux-x86-64.so.2"):
+        if os.path.exists(os.path.join(rootfs, cand)):
+            loader = os.path.join(rootfs, cand)
+            break
+    if not loader:
+        die("image has no dynamic loader")
+    prog = command[0]
+    if not prog.startswith("/"):
+        for sub in ("usr/local/bin", "usr/bin", "bin"):
+            if os.path.exists(os.path.join(rootfs, sub, prog)):
+                prog = os.path.join(rootfs, sub, prog)
+                break
+        else:
+            die("%s not found in image" % prog)
+    else:
+        prog = rootfs + prog
+
+    icd = []
+    for sub in ("usr/share/vulkan/icd.d",):
+        p = os.path.join(rootfs, sub)
+        if os.path.isdir(p):
+            icd += [os.path.join(p, n) for n in sorted(os.listdir(p)) if n.endswith(".json")]
+    home = os.path.join(run_dir, "home")
+    os.makedirs(home)
+    child_env = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": home,
+        "VK_DRIVER_FILES": ":".join(icd),
+        "XDG_CACHE_HOME": os.path.join(home, ".cache"),
+    }
+    for k, v in env.items():
+        if k != "HOME":
+            child_env[k] = v
+
+    argv = [loader, "--library-path", ":".join(libdirs), prog] + command[1:]
+    print("lemonade oci shim: " + " ".join(argv), flush=True)
+
+    libc = ctypes.CDLL(None)
+
+    def preexec():
+        os.setsid()
+        libc.prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG: die with the shim
+
+    os.makedirs(os.path.dirname(container_file(name)), exist_ok=True)
+    proc = subprocess.Popen(argv, env=child_env, preexec_fn=preexec)
+    with open(container_file(name), "w") as f:
+        json.dump({"name": name, "pid": proc.pid, "shim": os.getpid()}, f)
+
+    def forward(sig, _frame):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            pass
+
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, forward)
+    rc = proc.wait()
+    try:
+        os.remove(container_file(name))
+    except FileNotFoundError:
+        pass
+    shutil.rmtree(run_dir, ignore_errors=True)
+    sys.exit(rc if rc >= 0 else 128 - rc)
+
+
+def read_container(name):
+    try:
+        with open(container_file(name)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def cmd_stop(args):
+    timeout = 10
+    names = []
+    i = 0
+    while i < len(args):
+        if args[i] in ("--time", "-t"):
+            timeout = int(args[i + 1])
+            i += 2
+        else:
+            names.append(args[i])
+            i += 1
+    for name in names:
+        c = read_container(name)
+        if not c:
+            die("no such container: " + name, 125)
+        kill_container(c, signal.SIGTERM)
+        deadline = time.time() + timeout
+        while time.time() < deadline and alive(c["pid"]):
+            time.sleep(0.1)
+        if alive(c["pid"]):
+            kill_container(c, signal.SIGKILL)
+        print(name)
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def kill_container(c, sig):
+    try:
+        os.killpg(c["pid"], sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def cmd_rm(args):
+    for name in [a for a in args if not a.startswith("-")]:
+        c = read_container(name)
+        if c:
+            kill_container(c, signal.SIGKILL)
+            try:
+                os.remove(container_file(name))
+            except FileNotFoundError:
+                pass
+            shutil.rmtree(os.path.join(ROOT, "run", name), ignore_errors=True)
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv:
+        die("no command")
+    cmd, rest = argv[0], argv[1:]
+    os.makedirs(ROOT, exist_ok=True)
+    if cmd == "info":
+        # Format fields lemond reads: Rootless NetworkBackend OCIRuntime.
+        if "--format" in rest:
+            print("true netavark crun")
+        else:
+            print("host:\n  security:\n    rootless: true\n  networkBackend: netavark\n  ociRuntime:\n    name: crun")
+    elif cmd == "pull":
+        cmd_pull(rest)
+    elif cmd == "image":
+        cmd_image(rest)
+    elif cmd == "rmi":
+        cmd_rmi(rest)
+    elif cmd == "network":
+        pass  # containers share the snap's network namespace
+    elif cmd == "run":
+        cmd_run(rest)
+    elif cmd == "stop":
+        cmd_stop(rest)
+    elif cmd == "rm":
+        cmd_rm(rest)
+    elif cmd == "inspect":
+        print("")
+    elif cmd in ("--version", "version"):
+        print("podman version 5.0.0-lemonade-snap-shim")
+    else:
+        die("unsupported command: " + cmd)
+
+
+if __name__ == "__main__":
+    main()
