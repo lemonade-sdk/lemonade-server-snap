@@ -26,6 +26,18 @@ jobs:
         # Add source-branch attribute so snapcraft checks out geramy/nexus-integration-main
         sed -i '/source: https:\/\/github\.com\/lemonade-sdk\/lemonade\.git$/a\    source-branch: geramy/nexus-integration-main' snap/snapcraft.yaml
         grep -A2 'source:' snap/snapcraft.yaml | head -6
+    - name: Add Rust toolchain for the Nexus client SDK
+      run: |
+        set -eu
+        # The nexus branch needs Cargo >= 1.85; noble's default cargo is 1.75
+        # and upstream's CMake finds /usr/lib/rust-1.85/bin/cargo.
+        ANCHOR='      - libdrm-dev'
+        if ! grep -qxF "$ANCHOR" snap/snapcraft.yaml; then
+          echo "Could not find libdrm-dev build-package in snap/snapcraft.yaml" >&2
+          exit 1
+        fi
+        sed -i "s|^${ANCHOR}\$|${ANCHOR}\n      - cargo-1.85\n      - rustc-1.85|" snap/snapcraft.yaml
+        sed -n '/libdrm-dev/,+2p' snap/snapcraft.yaml
     - name: Set nexus snap version
       run: |
         set -eu
