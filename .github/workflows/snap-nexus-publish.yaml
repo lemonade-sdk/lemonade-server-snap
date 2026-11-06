@@ -26,6 +26,17 @@ jobs:
         # Add source-branch attribute so snapcraft checks out geramy/nexus-integration-main
         sed -i '/source: https:\/\/github\.com\/lemonade-sdk\/lemonade\.git$/a\    source-branch: geramy/nexus-integration-main' snap/snapcraft.yaml
         grep -A2 'source:' snap/snapcraft.yaml | head -6
+    - name: Set nexus snap version
+      run: |
+        set -eu
+        # Snap versions are limited to 32 chars, so use nexus-<date>-<sha> instead of git describe
+        DESCRIBE_LINE='        VERSION=$(git describe --tags --abbrev=10)'
+        if ! grep -qF "$DESCRIBE_LINE" snap/snapcraft.yaml; then
+          echo "Could not find version fallback line in snap/snapcraft.yaml" >&2
+          exit 1
+        fi
+        sed -i "s|^${DESCRIBE_LINE}\$|        VERSION=nexus-\$(date -u +%Y%m%d)-\$(git rev-parse --short=10 HEAD)|" snap/snapcraft.yaml
+        grep -n 'VERSION=' snap/snapcraft.yaml
     - uses: canonical/action-build@v1.3.0
       id: build
     - uses: snapcore/action-publish@v1
