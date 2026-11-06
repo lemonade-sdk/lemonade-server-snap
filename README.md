@@ -182,7 +182,7 @@ lemonade-server --help
 ## Container Backends
 
 Strict confinement can't run Podman or Docker, so the snap ships a small
-`podman` stand-in (`scripts/podman`) that implements only the commands lemond's
+`podman` stand-in (`podman-shim/`, a small Rust binary) that implements only the commands lemond's
 container backends (for example `llamacpp:nathanw`) use. It pulls the
 digest-pinned image straight from the registry, unpacks it under
 `$SNAP_COMMON/oci`, and runs the image's program through the image's own
