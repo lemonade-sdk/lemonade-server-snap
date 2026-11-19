@@ -1,0 +1,40 @@
+name: Snap Container Support Build
+
+on:
+  push:
+    branches:
+      - spike/oci-shim
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+
+    - uses: canonical/action-build@v1.3.0
+      id: build
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: snap-container-support-${{ matrix.arch }}
+        path: ${{ steps.build.outputs.snap }}
+        retention-days: 5
+
+    - uses: snapcore/action-publish@v1
+      env:
+        SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.STORE_LOGIN }}
+      with:
+        snap: ${{ steps.build.outputs.snap }}
+        release: latest/candidate/container-support

@@ -265,7 +265,7 @@ fn unpack_layer<R: Read>(reader: R, dest: &Path) -> Res<()> {
 }
 
 /// ICD manifests name their driver by an absolute path inside the image.
-fn rewrite_vulkan_manifests(rootfs: &Path) {
+fn rewrite_vulkan_manifests(rootfs: &Path, final_rootfs: &Path) {
     for sub in ["usr/share/vulkan/icd.d", "etc/vulkan/icd.d"] {
         let Ok(rd) = fs::read_dir(rootfs.join(sub)) else { continue };
         for e in rd.flatten() {
@@ -274,7 +274,7 @@ fn rewrite_vulkan_manifests(rootfs: &Path) {
             let Ok(mut v) = serde_json::from_str::<Value>(&text) else { continue };
             let Some(lib) = v["ICD"]["library_path"].as_str().map(String::from) else { continue };
             if lib.starts_with('/') {
-                v["ICD"]["library_path"] = json!(format!("{}{}", rootfs.display(), lib));
+                v["ICD"]["library_path"] = json!(format!("{}{}", final_rootfs.display(), lib));
                 let _ = fs::write(&p, v.to_string());
             }
         }
@@ -327,7 +327,7 @@ fn cmd_pull(args: &[String]) -> Res<()> {
         }
         println!("Copying blob {digest} done");
     }
-    rewrite_vulkan_manifests(&rootfs);
+    rewrite_vulkan_manifests(&rootfs, &dest.join("rootfs"));
     fs::write(staging.join("image.json"), json!({"ref": reference, "id": parsed.digest}).to_string())
         .map_err(|e| e.to_string())?;
     remove_any(&dest);
@@ -384,6 +384,98 @@ extern "C" fn forward(sig: libc::c_int) {
 
 fn first_existing(base: &Path, candidates: &[&str]) -> Option<PathBuf> {
     candidates.iter().map(|c| base.join(c)).find(|p| p.exists())
+}
+
+/// Resolve `path` as if `root` were `/`, so absolute symlinks stay inside the image.
+fn resolve_in_root(root: &Path, path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut resolved = PathBuf::new();
+    let mut pending: Vec<std::ffi::OsString> = path
+        .components()
+        .rev()
+        .filter_map(|c| match c {
+            Component::Normal(n) => Some(n.to_os_string()),
+            _ => None,
+        })
+        .collect();
+    let mut hops = 0;
+    while let Some(part) = pending.pop() {
+        if part == ".." {
+            resolved.pop();
+            continue;
+        }
+        match fs::read_link(root.join(&resolved).join(&part)) {
+            Ok(target) => {
+                hops += 1;
+                if hops > 40 {
+                    return None;
+                }
+                if target.is_absolute() {
+                    resolved = PathBuf::new();
+                }
+                for c in target.components().rev() {
+                    match c {
+                        Component::Normal(n) => pending.push(n.to_os_string()),
+                        Component::ParentDir => pending.push("..".into()),
+                        _ => {}
+                    }
+                }
+            }
+            Err(_) => resolved.push(&part),
+        }
+    }
+    Some(root.join(resolved))
+}
+
+/// Directories the image's own ld.so.conf names, then the stock ones.
+fn library_dirs(rootfs: &Path) -> Vec<String> {
+    fn read_conf(rootfs: &Path, conf: &Path, out: &mut Vec<PathBuf>, depth: u32) {
+        let Some(file) = resolve_in_root(rootfs, conf) else { return };
+        let Ok(text) = fs::read_to_string(file) else { return };
+        for line in text.lines() {
+            let line = line.split('#').next().unwrap_or("").trim();
+            if let Some(inc) = line.strip_prefix("include ") {
+                let inc = Path::new(inc.trim());
+                let inc = if inc.is_absolute() {
+                    inc.to_path_buf()
+                } else {
+                    conf.parent().unwrap_or(Path::new("/")).join(inc)
+                };
+                let Some(dir) = inc.parent().map(Path::to_path_buf) else { continue };
+                if depth >= 4 {
+                    continue;
+                }
+                let Some(real) = resolve_in_root(rootfs, &dir) else { continue };
+                let mut files: Vec<PathBuf> = fs::read_dir(real)
+                    .map(|rd| rd.flatten().map(|e| e.path()).collect())
+                    .unwrap_or_default();
+                files.sort();
+                for f in files.iter().filter(|f| f.extension().map_or(false, |x| x == "conf")) {
+                    if let Some(name) = f.file_name() {
+                        read_conf(rootfs, &dir.join(name), out, depth + 1);
+                    }
+                }
+            } else if line.starts_with('/') {
+                if let Some(d) = resolve_in_root(rootfs, Path::new(line)) {
+                    out.push(d);
+                }
+            }
+        }
+    }
+    let mut dirs = Vec::new();
+    read_conf(rootfs, Path::new("/etc/ld.so.conf"), &mut dirs, 0);
+    for d in ["usr/local/lib64", "usr/local/lib", "usr/lib64", "usr/lib", "lib64", "lib"] {
+        dirs.push(rootfs.join(d));
+    }
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut out = Vec::new();
+    for d in dirs {
+        if !seen.contains(&d) {
+            out.push(d.to_string_lossy().into_owned());
+            seen.push(d);
+        }
+    }
+    out
 }
 
 fn cmd_run(args: &[String]) -> Res<()> {
@@ -465,10 +557,7 @@ fn cmd_run(args: &[String]) -> Res<()> {
         }
     }
 
-    let libdirs: Vec<String> = ["usr/local/lib64", "usr/local/lib", "usr/lib64", "usr/lib", "lib64", "lib"]
-        .iter()
-        .map(|d| rootfs.join(d).to_string_lossy().into_owned())
-        .collect();
+    let libdirs = library_dirs(&rootfs);
     let loader = first_existing(
         &rootfs,
         &[

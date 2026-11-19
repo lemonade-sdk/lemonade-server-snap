@@ -223,6 +223,8 @@ parts:
       VERSION=$(craftctl get version)
       if [ -z $VERSION ]; then
         VERSION=$(git describe --tags --abbrev=10)
+        # snap version max length is 32
+        VERSION=$(printf '%s' "${VERSION#v}" | cut -c1-32 | sed 's/[-.+~]*$//')
         craftctl set version=$VERSION
       fi
       # Under snap strict confinement, /proc/driver/nvidia/gpus is unreadable
